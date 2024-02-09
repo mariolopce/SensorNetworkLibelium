@@ -22,6 +22,28 @@
 
 // Put your libraries here (#include ...)
 #include <WaspSensorEvent_v30.h>
+#include <WaspXBee802.h>
+#include <WaspFrame.h>
+
+// Destination MAC address
+//////////////////////////////////////////
+char RX_ADDRESS[] = "0013A200417EE503"; //addres of the board that will receive
+//////////////////////////////////////////
+
+// Define the Waspmote ID
+char WASPMOTE_ID[] = "node_01";
+
+// define variable
+uint8_t error;
+
+char buffer[100];
+char temp_string[10]; // Make sure this is large enough to hold your float
+char x_string[10];
+char y_string[10];
+char z_string[10];
+char preasure_string[10];
+char humidity_string[10];
+
 uint8_t status;
 int x_acc;
 int y_acc;
@@ -38,6 +60,12 @@ void setup()
   USB.ON();
   USB.println(F("Exercise 3: Sensor reading + sleep"));
   ACC.ON();
+
+  // store Waspmote identifier in EEPROM memory
+  frame.setID( WASPMOTE_ID );
+  
+  // init XBee
+  xbee802.ON();
   
   // Setting time
   RTC.ON(); 
@@ -54,6 +82,7 @@ void setup()
 
 void loop()
 {
+  
   // User should implement some warning
     // In this example, now wait for signal
     // stabilization to generate a new interruption
@@ -84,6 +113,7 @@ void loop()
   // should always answer 0x32, it is used to check
   // the proper functionality of the accelerometer
   status = ACC.check();
+  
 
   /*
 
@@ -117,6 +147,7 @@ void loop()
   USB.println(F("Waspmote goes into sleep mode until the Accelerometer causes an interrupt"));
   PWR.sleep(SENSOR_ON);
 
+
    // Interruption event happened
 
   ///////////////////////////////////////////////
@@ -140,6 +171,31 @@ void loop()
   {
     // clear interruption flag
     intFlag &= ~(ACC_INT);
+    xbee802.ON();
+
+    snprintf(buffer, sizeof(buffer), "Alarm: Free fall detected");
+
+    // send XBee packet
+    error = xbee802.send( RX_ADDRESS, (uint8_t*)buffer, strlen(buffer));
+    
+    // check TX flag
+    if( error == 0 )
+    {
+      USB.println(F("send ok"));
+      
+      // blink green LED
+      Utils.blinkGreenLED();
+      
+    }
+    else 
+    {
+      USB.println(F("send error"));
+      
+      // blink red LED
+      Utils.blinkRedLED();
+    }
+
+    memset(buffer, 0, sizeof(buffer)); // Resets buffer contents to 0
     
     // print info
     USB.ON();
@@ -161,6 +217,7 @@ void loop()
   {
     // clear interruption flag
     intFlag &= ~(RTC_INT);
+    Utils.setLED(LED1, LED_ON);
     // print info
     USB.ON();
     USB.println(F("++++++++++++++++++++++++++++"));
@@ -177,7 +234,7 @@ void loop()
     pres = Events.getPressure();
 
 
-    //ADDED HERE THE READ AND SHOW OF THE ACC TAKEN FROM THE COMMENTED CODE FROM ABOVE
+    //ADD HERE THE READ AND SHOW OF THE ACC TAKEN FROM THE COMMENTED CODE FROM ABOVE
 
     //----------X Value-----------------------
     x_acc = ACC.getX();
@@ -224,13 +281,56 @@ void loop()
     USB.print(PWR.getBatteryLevel(),DEC);
     USB.println(F(" %"));
     USB.println("-----------------------------"); 
-    USB.println(""); 
-    
+    USB.println("");
+
+    Utils.setLED(LED1, LED_OFF);
 
     USB.OFF();
     //Events.OFF();
 
     RTC.setAlarm1("00:00:00:30",RTC_OFFSET,RTC_ALM1_MODE5);
+    xbee802.ON();
+
+    
+    dtostrf(temp, 6, 2, temp_string);
+    dtostrf(x_acc, 6, 2, x_string);
+    dtostrf(y_acc, 6, 2, y_string);
+    dtostrf(z_acc, 6, 2, z_string);
+    dtostrf(humd, 6, 2, humidity_string);
+    dtostrf(pres, 6, 2, preasure_string);
+
+    Utils.setLED(LED0, LED_ON);
+     // create new frame
+    frame.createFrame(ASCII);  
+    
+    // add frame fields
+    frame.addSensor(SENSOR_STR, "new_sensor_frame");
+    frame.addSensor(SENSOR_BAT, PWR.getBatteryLevel()); 
+    snprintf(buffer, sizeof(buffer), "%s %s %s %d %s %s %s", temp_string, humidity_string, preasure_string, PWR.getBatteryLevel(), x_string, y_string, z_string);
+    //snprintf(buffer, sizeof(buffer), "%d %d %d %s", 1, 2, 3, "hola");
+    // send XBee packet
+    error = xbee802.send( RX_ADDRESS, (uint8_t*)buffer, strlen(buffer));
+    
+    // check TX flag
+    if( error == 0 )
+    {
+      USB.println(F("send ok"));
+      
+      // blink green LED
+      Utils.blinkGreenLED();
+      
+    }
+    else 
+    {
+      USB.println(F("send error"));
+      
+      // blink red LED
+      Utils.blinkRedLED();
+    }
+
+    memset(buffer, 0, sizeof(buffer)); // Resets buffer contents to 0
+    Utils.setLED(LED0, LED_OFF);
+    
   }
 
   if (intFlag & SENS_INT)
@@ -242,6 +342,31 @@ void loop()
     // In case the interruption came from PIR
     if (pir.getInt())
     {
+      xbee802.ON();
+      snprintf(buffer, sizeof(buffer), "Alarm: Motion detected");
+
+      // send XBee packet
+      error = xbee802.send( RX_ADDRESS, (uint8_t*)buffer, strlen(buffer));
+      
+      // check TX flag
+      if( error == 0 )
+      {
+        USB.println(F("send ok"));
+        
+        // blink green LED
+        Utils.blinkGreenLED();
+        
+      }
+      else 
+      {
+        USB.println(F("send error"));
+        
+        // blink red LED
+        Utils.blinkRedLED();
+      }
+
+      memset(buffer, 0, sizeof(buffer)); // Resets buffer contents to 0
+      
       USB.println(F("-----------------------------"));
       USB.println(F("Interruption from PIR"));
       USB.println(F("-----------------------------"));
