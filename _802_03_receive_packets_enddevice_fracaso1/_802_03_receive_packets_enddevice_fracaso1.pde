@@ -79,6 +79,8 @@ float humidity_gateway;
 int battery;
 char temperature[10], x_acc[10], y_acc[10], z_acc[10], humidity[10], pressure[10];
 
+int wifi_setUp_done = 0;
+
 void setup()
 {  
   // init USB port
@@ -160,15 +162,19 @@ void loop()
     //////////////////////////////////////////////////
     // 1. Switch ON
     //////////////////////////////////////////////////
-    error = WIFI_PRO.ON(socket);
-  
-    if ( error == 0 )
-    {
-      USB.println(F("1. WiFi switched ON"));
-    }
-    else
-    {
-      USB.println(F("1. WiFi did not initialize correctly"));
+
+    if(wifi_setUp_done==0){
+    
+      error = WIFI_PRO.ON(socket);
+    
+      if ( error == 0 )
+      {
+        USB.println(F("1. WiFi switched ON"));
+      }
+      else
+      {
+        USB.println(F("1. WiFi did not initialize correctly"));
+      }
     }
       //////////////////////////////////////////////////
     // 2. Check if connected
@@ -224,22 +230,29 @@ void loop()
   
       //LINEA NUEVA INTRODUCIDA
       //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
-  
-      // check response
-      if (error == 0)
-      {
-        // get socket handle (from 0 to 9)
-        socket_handle = WIFI_PRO._socket_handle;
-  
-        USB.print(F("3.1. Open TCP socket OK in handle: "));
-        USB.println(socket_handle, DEC);
+
+      while(wifi_setUp_done == 0){
+        // check response
+        if (error == 0)
+        {
+          // get socket handle (from 0 to 9)
+          socket_handle = WIFI_PRO._socket_handle;
+    
+          USB.print(F("3.1. Open TCP socket OK in handle: "));
+          USB.println(socket_handle, DEC);
+          wifi_setUp_done=1;
+        }
+        else
+        {
+          USB.println(F("3.1. Error calling 'setTCPclient' function"));
+          WIFI_PRO.printErrorCode();
+          status = false;
+        }
+
+        delay(1000);
+      
       }
-      else
-      {
-        USB.println(F("3.1. Error calling 'setTCPclient' function"));
-        WIFI_PRO.printErrorCode();
-        status = false;
-      }
+      
     }
   
     if (status == true)
@@ -250,6 +263,10 @@ void loop()
       unsigned char buf[200];
       int buflen = sizeof(buf);
       unsigned char payload[100];
+
+      unsigned char acc_buf[200];
+      int acc_buflen = sizeof(buf);
+      unsigned char acc_payload[100];
   
       // options
       data.clientID.cstring = (char*)"JwIBCDIyAxEGGBozBgYLGDg";
@@ -258,6 +275,7 @@ void loop()
       data.keepAliveInterval = 30;
       data.cleansession = 1;
       int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+      int acc_len = MQTTSerialize_connect(acc_buf, acc_buflen, &data);
   
       // Topic and message
       //topicString.cstring = (char *)"g0/mota1/temperature";
@@ -266,19 +284,29 @@ void loop()
       topicString.cstring = (char *) "channels/2425312/publish";
       //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
       snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel());
-      //snprintf((char *)payload, 200, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
+      USB.println(int(x_gateway));
+      USB.println(int(y_gateway));
+      USB.println(int(z_gateway));
+      snprintf((char *)acc_payload, 100, "field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
       //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
       //USB.println(payload);
       int payloadlen = strlen((const char*)payload);
+      int acc_payloadlen = strlen((const char*)acc_payload);
   
       len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
   
       len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
+
+
+      acc_len += MQTTSerialize_publish(acc_buf + acc_len, acc_buflen - acc_len, 0, 0, 0, 0, topicString, acc_payload, acc_payloadlen); /* 2 */
+  
+      acc_len += MQTTSerialize_disconnect(acc_buf + acc_len, acc_buflen - acc_len); /* 3 */
   
   
       ////////////////////////////////////////////////
       // 3.2. send data
       ////////////////////////////////////////////////
+      
       error = WIFI_PRO.send( socket_handle, buf, len);
   
       // check response
@@ -291,6 +319,23 @@ void loop()
         USB.println(F("3.2. Error calling 'send' function"));
         WIFI_PRO.printErrorCode();
       }
+      
+      delay(100);
+      
+      error = WIFI_PRO.send( socket_handle, acc_buf, acc_len);
+  
+      // check response
+      if (error == 0)
+      {
+        USB.println(F("3.2. Send acc data OK"));
+      }
+      else
+      {
+        USB.println(F("3.2. Error calling 'send' function for sending acc data"));
+        WIFI_PRO.printErrorCode();
+      }
+      
+      
   
       ////////////////////////////////////////////////
       // 3.3. Wait for answer from server
