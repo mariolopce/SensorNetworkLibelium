@@ -48,6 +48,7 @@ uint8_t socket = SOCKET1;
 // choose TCP server settings
 ///////////////////////////////////////
 char HOST[]        = "mqtt3.thingspeak.com"; //MQTT Broker
+//char HOST[]        = "http://mqtt.te.upm.es/"; //MQTT Broker
 char REMOTE_PORT[] = "1883";  //MQTT
 char LOCAL_PORT[]  = "3000";
 ///////////////////////////////////////
@@ -77,9 +78,14 @@ float pressure_gateway;
 float humidity_gateway;
 
 int battery;
-char temperature[10], x_acc[10], y_acc[10], z_acc[10], humidity[10], pressure[10];
+float temperature, x_acc, y_acc, z_acc, humidity, pressure;
 
-int wifi_setUp_done = 0;
+char temp_string[10]; // Make sure this is large enough to hold your float
+char x_string[10];
+char y_string[10];
+char z_string[10];
+char pressure_string[10];
+char humidity_string[10];
 
 void setup()
 {  
@@ -106,15 +112,365 @@ void loop()
     USB.println( xbee802._payload, xbee802._length);  //payload and lenght of the payload buffer
      
     if (strcmp((char*)xbee802._payload, "Alarm: Free fall detected") == 0){
-       // Mandar alarma
+      Utils.setLED(LED0, LED_ON);
+         //////////////////////////////////////////////////
+      // 1. Switch ON
+      //////////////////////////////////////////////////
+      error = WIFI_PRO.ON(socket);
+    
+      if ( error == 0 )
+      {
+        USB.println(F("1. WiFi switched ON"));
+      }
+      else
+      {
+        USB.println(F("1. WiFi did not initialize correctly"));
+      }
+        //////////////////////////////////////////////////
+      // 2. Check if connected
+      //////////////////////////////////////////////////
+    
+      // get actual time
+      previous = millis();
+    
+      // check connectivity
+      status =  WIFI_PRO.isConnected();
+    
+      // check if module is connected
+      if ( status == true )
+      {
+        USB.print(F("2. WiFi is connected OK"));
+        USB.print(F(" Time(ms):"));
+        USB.println(millis() - previous);
+    
+        // get IP address
+        error = WIFI_PRO.getIP();
+    
+        if (error == 0)
+        {
+          USB.print(F("IP address: "));
+          USB.println( WIFI_PRO._ip );
+        }
+        else
+        {
+          USB.println(F("getIP error"));
+        }
+      }
+      else
+      {
+        USB.print(F("2. WiFi is connected ERROR"));
+        USB.print(F(" Time(ms):"));
+        USB.println(millis() - previous);
+      }
+    
+    
+    
+      //////////////////////////////////////////////////
+      // 3. TCP
+      //////////////////////////////////////////////////
+    
+      // Check if module is connected
+      if (status == true)
+      {
+    
+        ////////////////////////////////////////////////
+        // 3.1. Open TCP socket
+        ////////////////////////////////////////////////
+        error = WIFI_PRO.setTCPclient( HOST, REMOTE_PORT, LOCAL_PORT);
+    
+        //LINEA NUEVA INTRODUCIDA
+        //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
+    
+        // check response
+        if (error == 0)
+        {
+          // get socket handle (from 0 to 9)
+          socket_handle = WIFI_PRO._socket_handle;
+    
+          USB.print(F("3.1. Open TCP socket OK in handle: "));
+          USB.println(socket_handle, DEC);
+        }
+        else
+        {
+          USB.println(F("3.1. Error calling 'setTCPclient' function"));
+          WIFI_PRO.printErrorCode();
+          status = false;
+        }
+      }
+    
+      if (status == true)
+      {
+        /// Publish MQTT
+        MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+        MQTTString topicString = MQTTString_initializer;
+        unsigned char buf[200];
+        int buflen = sizeof(buf);
+        unsigned char payload[100];
+    
+        // options
+        data.clientID.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+        data.password.cstring = (char*)"+/Y4P8d/ZpSi/KeI0XXJ+O/H";
+        data.username.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+        data.keepAliveInterval = 30;
+        data.cleansession = 1;
+        int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+    
+        // Topic and message
+        //topicString.cstring = (char *)"g0/mota1/temperature";
+        //snprintf((char *)payload, 100, "%s%d", "Mota1 #", ciclo);
+      
+        topicString.cstring = (char *) "channels/2428994/publish";
+        //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
+        snprintf((char *)payload, 100, "field1=%d&status=MQTTPUBLISH", 1);
+        //snprintf((char *)payload, 200, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
+        //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
+        //USB.println(payload);
+        int payloadlen = strlen((const char*)payload);
+    
+        len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
+    
+        len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
+    
+    
+        ////////////////////////////////////////////////
+        // 3.2. send data
+        ////////////////////////////////////////////////
+        error = WIFI_PRO.send( socket_handle, buf, len);
+    
+        // check response
+        if (error == 0)
+        {
+          USB.println(F("3.2. Send data OK"));
+        }
+        else
+        {
+          USB.println(F("3.2. Error calling 'send' function"));
+          WIFI_PRO.printErrorCode();
+        }
+    
+        ////////////////////////////////////////////////
+        // 3.3. Wait for answer from server
+        ////////////////////////////////////////////////
+        /*      USB.println(F("Listen to TCP socket:"));
+              error = WIFI_PRO.receive(socket_handle, 30000);
+    
+              // check answer
+              if (error == 0)
+              {
+                USB.println(F("\n========================================"));
+                USB.print(F("Data: "));
+                USB.println( WIFI_PRO._buffer, WIFI_PRO._length);
+    
+                USB.print(F("Length: "));
+                USB.println( WIFI_PRO._length,DEC);
+                USB.println(F("========================================"));
+              }
+        */
+      }
+      ////////////////////////////////////////////////
+      // 3.4. close socket
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.closeSocket(socket_handle);
+    
+      // check response
+      if (error == 0)
+      {
+        USB.println(F("3.3. Close socket OK"));
+      }
+      else
+      {
+        USB.println(F("3.3. Error calling 'closeSocket' function"));
+        WIFI_PRO.printErrorCode();
+      }
+      Utils.setLED(LED0, LED_OFF);
+
+  
     }
     else if (strcmp((char*)xbee802._payload, "Alarm: Motion detected") == 0){
-      // Mandar alarma
+      Utils.setLED(LED0, LED_ON);
+      //////////////////////////////////////////////////
+      // 1. Switch ON
+      //////////////////////////////////////////////////
+      error = WIFI_PRO.ON(socket);
+    
+      if ( error == 0 )
+      {
+        USB.println(F("1. WiFi switched ON"));
+      }
+      else
+      {
+        USB.println(F("1. WiFi did not initialize correctly"));
+      }
+        //////////////////////////////////////////////////
+      // 2. Check if connected
+      //////////////////////////////////////////////////
+    
+      // get actual time
+      previous = millis();
+    
+      // check connectivity
+      status =  WIFI_PRO.isConnected();
+    
+      // check if module is connected
+      if ( status == true )
+      {
+        USB.print(F("2. WiFi is connected OK"));
+        USB.print(F(" Time(ms):"));
+        USB.println(millis() - previous);
+    
+        // get IP address
+        error = WIFI_PRO.getIP();
+    
+        if (error == 0)
+        {
+          USB.print(F("IP address: "));
+          USB.println( WIFI_PRO._ip );
+        }
+        else
+        {
+          USB.println(F("getIP error"));
+        }
+      }
+      else
+      {
+        USB.print(F("2. WiFi is connected ERROR"));
+        USB.print(F(" Time(ms):"));
+        USB.println(millis() - previous);
+      }
+    
+    
+    
+      //////////////////////////////////////////////////
+      // 3. TCP
+      //////////////////////////////////////////////////
+    
+      // Check if module is connected
+      if (status == true)
+      {
+    
+        ////////////////////////////////////////////////
+        // 3.1. Open TCP socket
+        ////////////////////////////////////////////////
+        error = WIFI_PRO.setTCPclient( HOST, REMOTE_PORT, LOCAL_PORT);
+    
+        //LINEA NUEVA INTRODUCIDA
+        //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
+    
+        // check response
+        if (error == 0)
+        {
+          // get socket handle (from 0 to 9)
+          socket_handle = WIFI_PRO._socket_handle;
+    
+          USB.print(F("3.1. Open TCP socket OK in handle: "));
+          USB.println(socket_handle, DEC);
+        }
+        else
+        {
+          USB.println(F("3.1. Error calling 'setTCPclient' function"));
+          WIFI_PRO.printErrorCode();
+          status = false;
+        }
+      }
+    
+      if (status == true)
+      {
+        /// Publish MQTT
+        MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+        MQTTString topicString = MQTTString_initializer;
+        unsigned char buf[200];
+        int buflen = sizeof(buf);
+        unsigned char payload[100];
+    
+        // options
+        data.clientID.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+        data.password.cstring = (char*)"+/Y4P8d/ZpSi/KeI0XXJ+O/H";
+        data.username.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+        data.keepAliveInterval = 30;
+        data.cleansession = 1;
+        int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+    
+        // Topic and message
+        //topicString.cstring = (char *)"g0/mota1/temperature";
+        //snprintf((char *)payload, 100, "%s%d", "Mota1 #", ciclo);
+      
+        topicString.cstring = (char *) "channels/2428994/publish";
+        //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
+        snprintf((char *)payload, 100, "field2=%d&status=MQTTPUBLISH", 1);
+        //snprintf((char *)payload, 200, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
+        //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
+        //USB.println(payload);
+        int payloadlen = strlen((const char*)payload);
+    
+        len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
+    
+        len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
+    
+    
+        ////////////////////////////////////////////////
+        // 3.2. send data
+        ////////////////////////////////////////////////
+        error = WIFI_PRO.send( socket_handle, buf, len);
+    
+        // check response
+        if (error == 0)
+        {
+          USB.println(F("3.2. Send data OK"));
+        }
+        else
+        {
+          USB.println(F("3.2. Error calling 'send' function"));
+          WIFI_PRO.printErrorCode();
+        }
+    
+        ////////////////////////////////////////////////
+        // 3.3. Wait for answer from server
+        ////////////////////////////////////////////////
+        /*      USB.println(F("Listen to TCP socket:"));
+              error = WIFI_PRO.receive(socket_handle, 30000);
+    
+              // check answer
+              if (error == 0)
+              {
+                USB.println(F("\n========================================"));
+                USB.print(F("Data: "));
+                USB.println( WIFI_PRO._buffer, WIFI_PRO._length);
+    
+                USB.print(F("Length: "));
+                USB.println( WIFI_PRO._length,DEC);
+                USB.println(F("========================================"));
+              }
+        */
+      }
+      ////////////////////////////////////////////////
+      // 3.4. close socket
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.closeSocket(socket_handle);
+    
+      // check response
+      if (error == 0)
+      {
+        USB.println(F("3.3. Close socket OK"));
+      }
+      else
+      {
+        USB.println(F("3.3. Error calling 'closeSocket' function"));
+        WIFI_PRO.printErrorCode();
+      }
+
+      Utils.setLED(LED0, LED_OFF);
+
     }
     else{
-      sscanf( (const char*) xbee802._payload, "%s %s %s %d %s %s %s", temperature, humidity, pressure, &battery, x_acc, y_acc, z_acc);
+      sscanf( (const char*) xbee802._payload, "%s %s %s %d %s %s %s", temp_string, humidity_string, pressure_string, &battery, x_string, y_string, z_string);
     //sscanf( (const char*) xbee802._payload, "%d %d %d %s", 1, 2, 3, "hola");
-    
+    Utils.setLED(LED1, LED_ON);
+    temperature = atof(temp_string);
+    humidity = atof(humidity_string);
+    pressure = atof(pressure_string);
+    x_acc = atof(x_string);
+    y_acc = atof(y_string);
+    z_acc = atof(z_string);
     USB.println(F("Temperature: "));
     USB.println(temperature);
     USB.println(F("Humidity: "));
@@ -156,25 +512,23 @@ void loop()
     // Show data stored in '_payload' buffer indicated by '_length'
     USB.print(F("Length: "));  
     USB.println( xbee802._length,DEC); //print the usefull data of the buffer, which is the buffer elemets among the length
-
+    Utils.setLED(LED1, LED_OFF);
     ciclo++;
 
+
+    Utils.setLED(LED0, LED_ON);
     //////////////////////////////////////////////////
     // 1. Switch ON
     //////////////////////////////////////////////////
-
-    if(wifi_setUp_done==0){
-    
-      error = WIFI_PRO.ON(socket);
-    
-      if ( error == 0 )
-      {
-        USB.println(F("1. WiFi switched ON"));
-      }
-      else
-      {
-        USB.println(F("1. WiFi did not initialize correctly"));
-      }
+    error = WIFI_PRO.ON(socket);
+  
+    if ( error == 0 )
+    {
+      USB.println(F("1. WiFi switched ON"));
+    }
+    else
+    {
+      USB.println(F("1. WiFi did not initialize correctly"));
     }
       //////////////////////////////////////////////////
     // 2. Check if connected
@@ -230,29 +584,22 @@ void loop()
   
       //LINEA NUEVA INTRODUCIDA
       //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
-
-      while(wifi_setUp_done == 0){
-        // check response
-        if (error == 0)
-        {
-          // get socket handle (from 0 to 9)
-          socket_handle = WIFI_PRO._socket_handle;
-    
-          USB.print(F("3.1. Open TCP socket OK in handle: "));
-          USB.println(socket_handle, DEC);
-          wifi_setUp_done=1;
-        }
-        else
-        {
-          USB.println(F("3.1. Error calling 'setTCPclient' function"));
-          WIFI_PRO.printErrorCode();
-          status = false;
-        }
-
-        delay(1000);
-      
+  
+      // check response
+      if (error == 0)
+      {
+        // get socket handle (from 0 to 9)
+        socket_handle = WIFI_PRO._socket_handle;
+  
+        USB.print(F("3.1. Open TCP socket OK in handle: "));
+        USB.println(socket_handle, DEC);
       }
-      
+      else
+      {
+        USB.println(F("3.1. Error calling 'setTCPclient' function"));
+        WIFI_PRO.printErrorCode();
+        status = false;
+      }
     }
   
     if (status == true)
@@ -263,50 +610,35 @@ void loop()
       unsigned char buf[200];
       int buflen = sizeof(buf);
       unsigned char payload[100];
-
-      unsigned char acc_buf[200];
-      int acc_buflen = sizeof(buf);
-      unsigned char acc_payload[100];
   
       // options
-      data.clientID.cstring = (char*)"JwIBCDIyAxEGGBozBgYLGDg";
-      data.password.cstring = (char*)"H6N/1Vyt6HvzFLAdGhPKKoHn";
-      data.username.cstring = (char*)"JwIBCDIyAxEGGBozBgYLGDg";
+      data.clientID.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.password.cstring = (char*)"+/Y4P8d/ZpSi/KeI0XXJ+O/H";
+      data.username.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
       data.keepAliveInterval = 30;
       data.cleansession = 1;
       int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
-      int acc_len = MQTTSerialize_connect(acc_buf, acc_buflen, &data);
   
       // Topic and message
       //topicString.cstring = (char *)"g0/mota1/temperature";
       //snprintf((char *)payload, 100, "%s%d", "Mota1 #", ciclo);
     
-      topicString.cstring = (char *) "channels/2425312/publish";
+      topicString.cstring = (char *) "channels/2422894/publish";
       //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
       snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel());
-      USB.println(int(x_gateway));
-      USB.println(int(y_gateway));
-      USB.println(int(z_gateway));
-      snprintf((char *)acc_payload, 100, "field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
+      //snprintf((char *)payload, 200, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
       //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
       //USB.println(payload);
       int payloadlen = strlen((const char*)payload);
-      int acc_payloadlen = strlen((const char*)acc_payload);
   
       len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
   
       len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
-
-
-      acc_len += MQTTSerialize_publish(acc_buf + acc_len, acc_buflen - acc_len, 0, 0, 0, 0, topicString, acc_payload, acc_payloadlen); /* 2 */
-  
-      acc_len += MQTTSerialize_disconnect(acc_buf + acc_len, acc_buflen - acc_len); /* 3 */
   
   
       ////////////////////////////////////////////////
       // 3.2. send data
       ////////////////////////////////////////////////
-      
       error = WIFI_PRO.send( socket_handle, buf, len);
   
       // check response
@@ -319,23 +651,6 @@ void loop()
         USB.println(F("3.2. Error calling 'send' function"));
         WIFI_PRO.printErrorCode();
       }
-      
-      delay(100);
-      
-      error = WIFI_PRO.send( socket_handle, acc_buf, acc_len);
-  
-      // check response
-      if (error == 0)
-      {
-        USB.println(F("3.2. Send acc data OK"));
-      }
-      else
-      {
-        USB.println(F("3.2. Error calling 'send' function for sending acc data"));
-        WIFI_PRO.printErrorCode();
-      }
-      
-      
   
       ////////////////////////////////////////////////
       // 3.3. Wait for answer from server
@@ -373,6 +688,317 @@ void loop()
     }
 
   
+  
+  
+    //////////////////////////////////////////////////
+    // 3. TCP
+    //////////////////////////////////////////////////
+  
+    // Check if module is connected
+    if (status == true)
+    {
+  
+      ////////////////////////////////////////////////
+      // 3.1. Open TCP socket
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.setTCPclient( HOST, REMOTE_PORT, LOCAL_PORT);
+  
+      //LINEA NUEVA INTRODUCIDA
+      //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
+  
+      // check response
+      if (error == 0)
+      {
+        // get socket handle (from 0 to 9)
+        socket_handle = WIFI_PRO._socket_handle;
+  
+        USB.print(F("3.1. Open TCP socket OK in handle: "));
+        USB.println(socket_handle, DEC);
+      }
+      else
+      {
+        USB.println(F("3.1. Error calling 'setTCPclient' function"));
+        WIFI_PRO.printErrorCode();
+        status = false;
+      }
+    }
+  
+    if (status == true)
+    {
+      /// Publish MQTT
+      MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+      MQTTString topicString = MQTTString_initializer;
+      unsigned char buf[200];
+      int buflen = sizeof(buf);
+      unsigned char payload[100];
+  
+      // options
+      data.clientID.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.password.cstring = (char*)"+/Y4P8d/ZpSi/KeI0XXJ+O/H";
+      data.username.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.keepAliveInterval = 30;
+      data.cleansession = 1;
+      int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+  
+      // Topic and message
+      //topicString.cstring = (char *)"g0/mota1/temperature";
+      //snprintf((char *)payload, 100, "%s%d", "Mota1 #", ciclo);
+    
+      topicString.cstring = (char *) "channels/2428811/publish";
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
+      snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&status=MQTTPUBLISH", int(temperature), int(humidity), long(pressure), battery);
+      //snprintf((char *)payload, 100, "field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
+      //USB.println(payload);
+      int payloadlen = strlen((const char*)payload);
+  
+      len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
+  
+      len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
+  
+  
+      ////////////////////////////////////////////////
+      // 3.2. send data
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.send( socket_handle, buf, len);
+  
+      // check response
+      if (error == 0)
+      {
+        USB.println(F("3.2. Send data OK"));
+      }
+      else
+      {
+        USB.println(F("3.2. Error calling 'send' function"));
+        WIFI_PRO.printErrorCode();
+      }
+    }
+    ////////////////////////////////////////////////
+    // 3.4. close socket
+    ////////////////////////////////////////////////
+    error = WIFI_PRO.closeSocket(socket_handle);
+  
+    // check response
+    if (error == 0)
+    {
+      USB.println(F("3.3. Close socket OK"));
+    }
+    else
+    {
+      USB.println(F("3.3. Error calling 'closeSocket' function"));
+      WIFI_PRO.printErrorCode();
+    }
+    
+
+  
+  
+  
+    //////////////////////////////////////////////////
+    // 3. TCP
+    //////////////////////////////////////////////////
+  
+    // Check if module is connected
+    if (status == true)
+    {
+  
+      ////////////////////////////////////////////////
+      // 3.1. Open TCP socket
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.setTCPclient( HOST, REMOTE_PORT, LOCAL_PORT);
+  
+      //LINEA NUEVA INTRODUCIDA
+      //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
+  
+      // check response
+      if (error == 0)
+      {
+        // get socket handle (from 0 to 9)
+        socket_handle = WIFI_PRO._socket_handle;
+  
+        USB.print(F("3.1. Open TCP socket OK in handle: "));
+        USB.println(socket_handle, DEC);
+      }
+      else
+      {
+        USB.println(F("3.1. Error calling 'setTCPclient' function"));
+        WIFI_PRO.printErrorCode();
+        status = false;
+      }
+    }
+  
+    if (status == true)
+    {
+      /// Publish MQTT
+      MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+      MQTTString topicString = MQTTString_initializer;
+      unsigned char buf[200];
+      int buflen = sizeof(buf);
+      unsigned char payload[100];
+  
+      // options
+      data.clientID.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.password.cstring = (char*)"+/Y4P8d/ZpSi/KeI0XXJ+O/H";
+      data.username.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.keepAliveInterval = 30;
+      data.cleansession = 1;
+      int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+  
+      // Topic and message
+      //topicString.cstring = (char *)"g0/mota1/temperature";
+      //snprintf((char *)payload, 100, "%s%d", "Mota1 #", ciclo);
+    
+      topicString.cstring = (char *) "channels/2422894/publish";
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&status=MQTTPUBLISH", int(temperature), int(humidity), long(pressure), battery);
+      snprintf((char *)payload, 100, "field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_gateway), int(y_gateway), int(z_gateway));
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
+      //USB.println(payload);
+      int payloadlen = strlen((const char*)payload);
+  
+      len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
+  
+      len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
+  
+  
+      ////////////////////////////////////////////////
+      // 3.2. send data
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.send( socket_handle, buf, len);
+  
+      // check response
+      if (error == 0)
+      {
+        USB.println(F("3.2. Send data OK"));
+      }
+      else
+      {
+        USB.println(F("3.2. Error calling 'send' function"));
+        WIFI_PRO.printErrorCode();
+      }
+    }
+    ////////////////////////////////////////////////
+    // 3.4. close socket
+    ////////////////////////////////////////////////
+    error = WIFI_PRO.closeSocket(socket_handle);
+  
+    // check response
+    if (error == 0)
+    {
+      USB.println(F("3.3. Close socket OK"));
+    }
+    else
+    {
+      USB.println(F("3.3. Error calling 'closeSocket' function"));
+      WIFI_PRO.printErrorCode();
+    }
+
+
+  
+  
+    //////////////////////////////////////////////////
+    // 3. TCP
+    //////////////////////////////////////////////////
+  
+    // Check if module is connected
+    if (status == true)
+    {
+  
+      ////////////////////////////////////////////////
+      // 3.1. Open TCP socket
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.setTCPclient( HOST, REMOTE_PORT, LOCAL_PORT);
+  
+      //LINEA NUEVA INTRODUCIDA
+      //LOCAL_PORT[3]= (LOCAL_PORT[3] == '9') ? '0': (LOCAL_PORT[3]+1);
+  
+      // check response
+      if (error == 0)
+      {
+        // get socket handle (from 0 to 9)
+        socket_handle = WIFI_PRO._socket_handle;
+  
+        USB.print(F("3.1. Open TCP socket OK in handle: "));
+        USB.println(socket_handle, DEC);
+      }
+      else
+      {
+        USB.println(F("3.1. Error calling 'setTCPclient' function"));
+        WIFI_PRO.printErrorCode();
+        status = false;
+      }
+    }
+  
+    if (status == true)
+    {
+      /// Publish MQTT
+      MQTTPacket_connectData data = MQTTPacket_connectData_initializer;
+      MQTTString topicString = MQTTString_initializer;
+      unsigned char buf[200];
+      int buflen = sizeof(buf);
+      unsigned char payload[100];
+  
+      // options
+      data.clientID.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.password.cstring = (char*)"+/Y4P8d/ZpSi/KeI0XXJ+O/H";
+      data.username.cstring = (char*)"FCEpCQUHESInLQohNxsiAio";
+      data.keepAliveInterval = 30;
+      data.cleansession = 1;
+      int len = MQTTSerialize_connect(buf, buflen, &data); /* 1 */
+  
+      // Topic and message
+      //topicString.cstring = (char *)"g0/mota1/temperature";
+      //snprintf((char *)payload, 100, "%s%d", "Mota1 #", ciclo);
+    
+      topicString.cstring = (char *) "channels/2428811/publish";
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel(), int(x_gateway), int(y_gateway), int(z_gateway));
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&field3=%ld&field4=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway), long(pressure_gateway), PWR.getBatteryLevel());
+      snprintf((char *)payload, 100, "field5=%d&field6=%d&field7=%d&status=MQTTPUBLISH", int(x_acc), int(y_acc), int(z_acc));
+      //snprintf((char *)payload, 100, "field1=%d&field2=%d&status=MQTTPUBLISH", int(temp_gateway), int(humidity_gateway));
+      //USB.println(payload);
+      int payloadlen = strlen((const char*)payload);
+  
+      len += MQTTSerialize_publish(buf + len, buflen - len, 0, 0, 0, 0, topicString, payload, payloadlen); /* 2 */
+  
+      len += MQTTSerialize_disconnect(buf + len, buflen - len); /* 3 */
+  
+  
+      ////////////////////////////////////////////////
+      // 3.2. send data
+      ////////////////////////////////////////////////
+      error = WIFI_PRO.send( socket_handle, buf, len);
+  
+      // check response
+      if (error == 0)
+      {
+        USB.println(F("3.2. Send data OK"));
+      }
+      else
+      {
+        USB.println(F("3.2. Error calling 'send' function"));
+        WIFI_PRO.printErrorCode();
+      }
+    }
+    ////////////////////////////////////////////////
+    // 3.4. close socket
+    ////////////////////////////////////////////////
+    error = WIFI_PRO.closeSocket(socket_handle);
+  
+    // check response
+    if (error == 0)
+    {
+      USB.println(F("3.3. Close socket OK"));
+    }
+    else
+    {
+      USB.println(F("3.3. Error calling 'closeSocket' function"));
+      WIFI_PRO.printErrorCode();
+    }
+  
+    Utils.setLED(LED0, LED_OFF);
+  
+  
+  
+  
   }
   else
   {
@@ -381,8 +1007,8 @@ void loop()
      * '7' : Buffer full. Not enough memory space
      * '6' : Error escaping character within payload bytes
      * '5' : Error escaping character in checksum byte
-     * '4' : Checksum is not correct	  
-     * '3' : Checksum byte is not available	
+     * '4' : Checksum is not correct    
+     * '3' : Checksum byte is not available 
      * '2' : Frame Type is not valid
      * '1' : Timeout when receiving answer   
     */
