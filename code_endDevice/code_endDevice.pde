@@ -1,49 +1,43 @@
 /*
-    ------ Waspmote Pro Code Example --------
+    ------ Program for the end device --------
 
-    Explanation: This is the basic Code for Waspmote Pro
-
-    Copyright (C) 2016 Libelium Comunicaciones Distribuidas S.L.
-    http://www.libelium.com
-
-    This program is free software: you can redistribute it and/or modify
-    it under the terms of the GNU General Public License as published by
-    the Free Software Foundation, either version 3 of the License, or
-    (at your option) any later version.
-
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+    Explanation: This program obtains the sensor values of temperature,
+ *  humidity, pressure and accelerometer, and its battery level
+ *  each 30 seconds the measurements are performed and the values are 
+ *  sent using IEEE 802.15.4. Moreover, alarms detecting free fall or 
+ *  movement by accelerometer and PIR sensor, respectively, will be
+ *  sent to the gateway immediately after being detected
 */
 
-// Put your libraries here (#include ...)
+// Libraries
 #include <WaspSensorEvent_v30.h>
 #include <WaspXBee802.h>
 #include <WaspFrame.h>
 
 // Destination MAC address
 //////////////////////////////////////////
-char RX_ADDRESS[] = "0013A200417EE503"; //addres of the board that will receive
+char RX_ADDRESS[] = "0013A200417EE503";   //address of the gateway
 //////////////////////////////////////////
 
 // Define the Waspmote ID
 char WASPMOTE_ID[] = "node_01";
 
-// define variable
+// define variables
 uint8_t error;
-
 char buffer[100];
-char temp_string[10]; // Make sure this is large enough to hold your float
+
+// Variables used to transform the measurements from float into string
+////////////////////////////////////////////////////////////////////////
+char temp_string[10]; 
 char x_string[10];
 char y_string[10];
 char z_string[10];
 char preasure_string[10];
 char humidity_string[10];
+////////////////////////////////////////////////////////////////////////
 
+// Variables used to save the measurements performed by the end device
+////////////////////////////////////////////////////////////////////////
 uint8_t status;
 int x_acc;
 int y_acc;
@@ -52,6 +46,9 @@ float temp;
 float humd;
 float pres;
 int value;
+////////////////////////////////////////////////////////////////////////
+
+// Define the socket of the movement sensor
 pirSensorClass pir(SOCKET_1);
 
 void setup()
@@ -72,33 +69,31 @@ void setup()
   RTC.setTime("29:01:22:02:18:24:56");
   USB.print(F("Time: "));
   USB.println(RTC.getTime());
+  
   // Setting alarm  in offset mode:
   // Alarm 1 is set 30 seconds later
   RTC.setAlarm1("00:00:00:30",RTC_OFFSET,RTC_ALM1_MODE5);
-
-
 }
 
 
 void loop()
 {
-  
-  // User should implement some warning
-    // In this example, now wait for signal
-    // stabilization to generate a new interruption
-    // Read the sensor level
     // Turn on the sensor board
     Events.ON();
+    // Read the value of the PIR sensor
     value = pir.readPirSensor();
-    
+
+    // Wait until PIR sensor is stabilized.
     while (value == 1)
     {
       USB.println(F("...wait for PIR stabilization"));
       delay(1000);
       value = pir.readPirSensor();
     }
+    
     // Enable interruptions from the board
   Events.attachInt();
+  
   ///////////////////////////////////////////////
   // 1. Starts accelerometer
   ///////////////////////////////////////////////
@@ -113,33 +108,6 @@ void loop()
   // should always answer 0x32, it is used to check
   // the proper functionality of the accelerometer
   status = ACC.check();
-  
-
-  /*
-
-  //----------X Value-----------------------
-  x_acc = ACC.getX();
-
-  //----------Y Value-----------------------
-  y_acc = ACC.getY();
-
-  //----------Z Value-----------------------
-  z_acc = ACC.getZ();
-
-  //-------------------------------
-
-  USB.print(F("\n------------------------------\nCheck: 0x")); 
-  USB.println(status, HEX);
-  USB.println(RTC.getTime());
-  USB.println(F("\n \t0X\t0Y\t0Z")); 
-  USB.print(F(" ACC\t")); 
-  USB.print(x_acc, DEC);
-  USB.print(F("\t")); 
-  USB.print(y_acc, DEC);
-  USB.print(F("\t")); 
-  USB.println(z_acc, DEC);
-
-  */
 
   ///////////////////////////////////////////////
   // 3. Set low-power consumption state
@@ -151,7 +119,8 @@ void loop()
    // Interruption event happened
 
   ///////////////////////////////////////////////
-  // 4. Disable interruption: ACC Free Fall interrupt 
+  // 4. ACC module has to be set to ON again
+  //    Disable interruption: ACC Free Fall interrupt 
   //    This is done to avoid new interruptions
   ///////////////////////////////////////////////
   ACC.ON();
@@ -164,16 +133,16 @@ void loop()
 
   ///////////////////////////////////////////////
   // 5. Check the interruption source 
-  ///////////////////////////////////////////////
-  // Only mandatory when multiple interruption 
-  // sources are expected to be generated
+  //
+  // Check if the interruption generated is from the accelerometer
+  ////////////////////////////////////////////////////////////////////////////
   if( intFlag & ACC_INT )
   {
     // clear interruption flag
     intFlag &= ~(ACC_INT);
-    xbee802.ON();
-
-    snprintf(buffer, sizeof(buffer), "Alarm: Free fall detected");
+    
+    xbee802.ON();   // Xbee module has to be set to ON again due to the sleep
+    snprintf(buffer, sizeof(buffer), "Alarm: Free fall detected");  // Send message warning of the alarm to the gateway
 
     // send XBee packet
     error = xbee802.send( RX_ADDRESS, (uint8_t*)buffer, strlen(buffer));
@@ -183,58 +152,48 @@ void loop()
     {
       USB.println(F("send ok"));
       
-      // blink green LED
-      Utils.blinkGreenLED();
-      
     }
     else 
     {
       USB.println(F("send error"));
       
-      // blink red LED
-      Utils.blinkRedLED();
     }
 
-    memset(buffer, 0, sizeof(buffer)); // Resets buffer contents to 0
+    memset(buffer, 0, sizeof(buffer)); // Reset buffer contents to 0
     
-    // print info
+    // print information about the interruption
     USB.ON();
     USB.println(F("++++++++++++++++++++++++++++"));
     USB.println(F("++ ACC interrupt detected ++"));
     USB.println(F("++++++++++++++++++++++++++++")); 
     USB.println(); 
-
-
-    // blink LEDs
-    for(int i=0; i<10; i++)
-    {
-      Utils.blinkLEDs(50);
-    }
-    
     
   }
+    ////////////////////////////////////////////////////////////////////////////
+  // Check if the interruption is generated by the RTC
+  ////////////////////////////////////////////////////////////////////////////
   if ( intFlag & RTC_INT )
   {
     // clear interruption flag
     intFlag &= ~(RTC_INT);
+    // Measuring stars, switch on green LED
     Utils.setLED(LED1, LED_ON);
-    // print info
+    
+    // print information about the interruption
     USB.ON();
     USB.println(F("++++++++++++++++++++++++++++"));
     USB.println(F("++ RTC interrupt detected ++"));
     USB.println(F("++++++++++++++++++++++++++++")); 
     USB.println();
 
+    //Switch on the events board
     Events.ON();
-    //Temperature
+    //Get temperature
     temp = Events.getTemperature();
-    //Humidity
+    //Get humidity
     humd = Events.getHumidity();
-    //Pressure
+    //Get pressure
     pres = Events.getPressure();
-
-
-    //ADD HERE THE READ AND SHOW OF THE ACC TAKEN FROM THE COMMENTED CODE FROM ABOVE
 
     //----------X Value-----------------------
     x_acc = ACC.getX();
@@ -257,12 +216,10 @@ void loop()
     USB.print(y_acc, DEC);
     USB.print(F("\t")); 
     USB.println(z_acc, DEC);
-
-    //UNTIL HERE IS THE PART COPIED FROM ABOVE OF THE ACCELEREOMTER
   
     
     ///////////////////////////////////////
-    // 2. Print BME280 Values
+    // Print BME280 Values
     ///////////////////////////////////////
     USB.println("-----------------------------");
     USB.print("Temperature: ");
@@ -276,22 +233,28 @@ void loop()
     USB.println(F(" Pa")); 
     USB.println("-----------------------------");  
 
-    //show battery
+    ///////////////////////////////////////
+    // Show battery level
+    ///////////////////////////////////////
     USB.print(F("Battery Level: "));
     USB.print(PWR.getBatteryLevel(),DEC);
     USB.println(F(" %"));
     USB.println("-----------------------------"); 
     USB.println("");
 
+    // Measuring finishes, set green LED to OFF
     Utils.setLED(LED1, LED_OFF);
 
     USB.OFF();
-    //Events.OFF();
 
+    // Set alarm to cause an interruption in 30 seconds
     RTC.setAlarm1("00:00:00:30",RTC_OFFSET,RTC_ALM1_MODE5);
+    // Switch on the xbee module 
     xbee802.ON();
 
-    
+    ///////////////////////////////////////
+    // Transform the float measurement values into strings
+    ///////////////////////////////////////
     dtostrf(temp, 6, 2, temp_string);
     dtostrf(x_acc, 6, 2, x_string);
     dtostrf(y_acc, 6, 2, y_string);
@@ -299,15 +262,19 @@ void loop()
     dtostrf(humd, 6, 2, humidity_string);
     dtostrf(pres, 6, 2, preasure_string);
 
+    // Transmission starts, red LED ON
     Utils.setLED(LED0, LED_ON);
+    
      // create new frame
     frame.createFrame(ASCII);  
-    
     // add frame fields
     frame.addSensor(SENSOR_STR, "new_sensor_frame");
     frame.addSensor(SENSOR_BAT, PWR.getBatteryLevel()); 
+
+    /////////////////////////////////////////////////////////////////////////////////
+    // Data sent: temperature, humidity, pressure, battery, x-axis, y-axis and z-axis
+    /////////////////////////////////////////////////////////////////////////////////
     snprintf(buffer, sizeof(buffer), "%s %s %s %d %s %s %s", temp_string, humidity_string, preasure_string, PWR.getBatteryLevel(), x_string, y_string, z_string);
-    //snprintf(buffer, sizeof(buffer), "%d %d %d %s", 1, 2, 3, "hola");
     // send XBee packet
     error = xbee802.send( RX_ADDRESS, (uint8_t*)buffer, strlen(buffer));
     
@@ -316,34 +283,31 @@ void loop()
     {
       USB.println(F("send ok"));
       
-      // blink green LED
-      Utils.blinkGreenLED();
-      
     }
     else 
     {
       USB.println(F("send error"));
       
-      // blink red LED
-      Utils.blinkRedLED();
+
     }
 
-    memset(buffer, 0, sizeof(buffer)); // Resets buffer contents to 0
-    Utils.setLED(LED0, LED_OFF);
+    memset(buffer, 0, sizeof(buffer));  // Reset buffer contents to 0
+    Utils.setLED(LED0, LED_OFF);        // Transmission finished, red LED OFF
     
   }
-
+////////////////////////////////////////////////////////////////////////////
+  // Check if the interruption is generated by the PIR sensor
+  ////////////////////////////////////////////////////////////////////////////
   if (intFlag & SENS_INT)
   {
-    
     // Load the interruption flag. Contains information about what device is triggering the interruption
     Events.loadInt();
     
     // In case the interruption came from PIR
     if (pir.getInt())
     {
-      xbee802.ON();
-      snprintf(buffer, sizeof(buffer), "Alarm: Motion detected");
+      xbee802.ON();   // Switch ON the xbee module
+      snprintf(buffer, sizeof(buffer), "Alarm: Motion detected"); // Send message warning of the alarm to the gateway
 
       // send XBee packet
       error = xbee802.send( RX_ADDRESS, (uint8_t*)buffer, strlen(buffer));
@@ -353,16 +317,11 @@ void loop()
       {
         USB.println(F("send ok"));
         
-        // blink green LED
-        Utils.blinkGreenLED();
-        
       }
       else 
       {
         USB.println(F("send error"));
-        
-        // blink red LED
-        Utils.blinkRedLED();
+
       }
 
       memset(buffer, 0, sizeof(buffer)); // Resets buffer contents to 0
