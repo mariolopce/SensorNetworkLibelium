@@ -1,0 +1,12 @@
+Project #2
+Group: Red
+Members: Mario López Cea, Jesús Mayordomo and Kimiya Shabani
+
+Files:
+_802_03_receive_packets_enddevice_final.pde: Program which is executed in the gateway.
+
+code_endDevice_final.pde: Program which is executed in the measuring node.
+
+Sensor_network_application.zip: Android application for displaying the information.
+
+Project2_Red.pdf: Document explaining the results shown in Thingspeak and in the app.

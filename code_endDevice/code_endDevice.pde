@@ -55,7 +55,7 @@ void setup()
 {
   // Setting ON USB and ACC
   USB.ON();
-  USB.println(F("Exercise 3: Sensor reading + sleep"));
+  USB.println(F("End-node"));
   ACC.ON();
 
   // store Waspmote identifier in EEPROM memory
